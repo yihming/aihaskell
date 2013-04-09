@@ -1,4 +1,4 @@
 aihaskell
 =========
 
-Abstract Interpretation Framework written in Haskell by Yiming Yang
+Abstract Interpretation Framework written in Haskell by
