@@ -1,4 +1,4 @@
 all:	AbstractSyntax.hs FrontEnd.hs Main.hs
-	ghc --make -o Interproc Main.hs
-remove:
+	ghc --make -Wall -o Interproc Main.hs
+clean:
 	rm *.o *.hi Interproc

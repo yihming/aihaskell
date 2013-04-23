@@ -29,7 +29,10 @@ instance Show VarSection where
 
 data VarDeclList = VarList [VarDecl]
 instance Show VarDeclList where
-  show (VarList (v:vs)) = concat (intersperse ", " $ (show v):[show vs])
+  show (VarList (v:vs)) = 
+    if null vs
+       then show v
+       else concat (intersperse ", " $ (show v):[show vs])
 
 data VarDecl = Var Identifier Type
 instance Show VarDecl where
@@ -42,7 +45,11 @@ instance Show Type where
 
 data Body = ProgramBody [Stmt]
 instance Show Body where
-  show (ProgramBody (s:ss)) = "begin\n" ++ (concat $ (show s):[show ss]) ++ "end\n"
+  show (ProgramBody (s:ss)) = 
+    if null ss
+       then "begin\n" ++ show s ++ "end\n"
+       else "begin\n" ++ (concat $ (show s):[show ss]) ++ "end\n"
+
 
 data Stmt = Skip
           | Halt
@@ -92,11 +99,17 @@ instance Show ParamList where
 
 data ThenBlock = Then [Stmt]
 instance Show ThenBlock where
-  show (Then (s:ss)) = concat $ (show s):[show ss]
+  show (Then (s:ss)) = 
+    if null ss
+       then show s
+       else concat $ (show s):[show ss]
 
 data ElseBlock = Else [Stmt]
 instance Show ElseBlock where
-  show (Else (s:ss)) = concat $ (show s):[show ss]
+  show (Else (s:ss)) = 
+    if null ss
+       then show s
+       else concat $ (show s):[show ss]
 
 data BoolExpr = Tru
               | Fls
