@@ -1,0 +1,12 @@
+proc incr (x : int) returns (y : int)
+begin
+  y = x + 1;
+end
+
+var i : int;
+begin
+  i = 0;
+  while (i <= 10) do
+    i = incr(i);
+  done;
+end
