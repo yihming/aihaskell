@@ -1,0 +1,290 @@
+-- Binding to the Parma Polyhedra Library -*-haskell-*-
+module PPL where
+
+import Foreign
+import Foreign.C
+import Monad        	(liftM, when)
+import Control.Exception(bracket_, throwIO, Exception(AssertionFailed))
+import GHC.Base
+import GHC.IOBase
+import GHC.Num
+import GHC.Word
+import GHC.Ptr
+import Numeric
+#include "/usr/include/gmp.h"
+#include <ppl_c.h>
+#include "errhandler.h"
+
+checkRetVal :: String -> IO CInt -> IO ()
+checkRetVal location act= do
+  msg <- extractErr
+  when (msg/="") $ putStrLn ("previous error: "++msg) 
+  res <- act
+  when (res<0) $ do
+    msg <- extractErr
+    throwIO $ AssertionFailed (makeErrMsg res++"\n"++msg)
+  where
+    makeErrMsg (#{const PPL_ERROR_OUT_OF_MEMORY}) =
+	"PPL: out of memory in "++location
+    makeErrMsg (#{const PPL_ERROR_INVALID_ARGUMENT}) =
+	"PPL: invalid argument in "++location
+    makeErrMsg (#{const PPL_ERROR_INTERNAL_ERROR}) =
+	"PPL: internal error in "++location
+    makeErrMsg (#{const PPL_ERROR_UNKNOWN_STANDARD_EXCEPTION}) =
+	"PPL: unknown standard exception in "++location
+    makeErrMsg (#{const PPL_ERROR_UNEXPECTED_ERROR}) =
+	"PPL: unexpected error in "++location
+    extractErr :: IO String
+    extractErr = do
+      lastErrorPtr <- peek lastError
+      if lastErrorPtr==nullPtr then return "" else
+	liftM (\str -> "("++str++")") $ peekCString lastErrorPtr
+
+foreign import ccall "&lastError" lastError :: Ptr CString
+
+type Dimension = #{type ppl_dimension_type}
+
+-- | A Coefficient.
+newtype Coefficient =
+    Coefficient { unCoefficient :: ForeignPtr Coefficient }
+
+-- | A linear expression.
+newtype LinearExpression =
+    LinearExpression { unLinearExpression :: ForeignPtr LinearExpression }
+
+-- | An inequality.
+newtype Constraint =
+    Constraint { unConstraint :: ForeignPtr Constraint }
+
+-- | A set of constraints.
+newtype ConstraintSystem =
+    ConstraintSystem { unConstraintSystem :: ForeignPtr ConstraintSystem }
+
+-- | An interator for traversing a constraint system.
+newtype ConstraintSystemIterator =
+    ConstraintSystemIterator { unConstraintSystemIterator :: ForeignPtr ConstraintSystemIterator }
+
+-- | A generator (i.e. a point, ray or line).
+newtype Generator =
+    Generator { unGenerator :: ForeignPtr Generator }
+
+-- | A set of generators.
+newtype GeneratorSystem =
+    GeneratorSystem { unGeneratorSystem :: ForeignPtr GeneratorSystem }
+
+-- | An iterator for traversion a set of generators.
+newtype GeneratorSystemIterator =
+    GeneratorSystemIterator { unGeneratorSystemIterator :: ForeignPtr GeneratorSystemIterator }
+
+-- | A polyhedron.
+newtype Polyhedron =
+    Polyhedron { unPolyhedron :: ForeignPtr Polyhedron }
+
+
+-- | A bounding box (added by pbv)
+newtype BoundingBox = 
+    BoundingBox { unBoundingBox :: ForeignPtr BoundingBox }
+
+-- | Relational operator in constraints.
+data ConstraintType
+  = Less
+  | LessOrEqual
+  | Equal
+  | GreaterOrEqual
+  | Greater
+    deriving (Eq,Ord)
+
+instance Enum ConstraintType where
+  toEnum #{const PPL_CONSTRAINT_TYPE_LESS_THAN } = Less
+  toEnum #{const PPL_CONSTRAINT_TYPE_LESS_THAN_OR_EQUAL } = LessOrEqual
+  toEnum #{const PPL_CONSTRAINT_TYPE_EQUAL } = Equal
+  toEnum #{const PPL_CONSTRAINT_TYPE_GREATER_THAN_OR_EQUAL } = GreaterOrEqual
+  toEnum #{const PPL_CONSTRAINT_TYPE_GREATER_THAN } = Greater
+
+  fromEnum Less = #{const PPL_CONSTRAINT_TYPE_LESS_THAN }
+  fromEnum LessOrEqual = #{const PPL_CONSTRAINT_TYPE_LESS_THAN_OR_EQUAL }
+  fromEnum Equal = #{const PPL_CONSTRAINT_TYPE_EQUAL }
+  fromEnum GreaterOrEqual = #{const PPL_CONSTRAINT_TYPE_GREATER_THAN_OR_EQUAL }
+  fromEnum Greater = #{const PPL_CONSTRAINT_TYPE_GREATER_THAN }
+
+instance Show ConstraintType where
+  show Less = "<"
+  show LessOrEqual = "<="
+  show Equal = "="
+  show GreaterOrEqual = ">="
+  show Greater = ">"
+
+data GeneratorType
+  = Line
+  | Ray
+  | Point
+  | ClosurePoint
+    deriving Eq
+
+instance Enum GeneratorType where
+  toEnum #{const PPL_GENERATOR_TYPE_LINE } = Line
+  toEnum #{const PPL_GENERATOR_TYPE_RAY } = Ray
+  toEnum #{const PPL_GENERATOR_TYPE_POINT } = Point
+  toEnum #{const PPL_GENERATOR_TYPE_CLOSURE_POINT } = ClosurePoint
+
+  fromEnum Line = #{const PPL_GENERATOR_TYPE_LINE }
+  fromEnum Ray = #{const PPL_GENERATOR_TYPE_RAY }
+  fromEnum Point = #{const PPL_GENERATOR_TYPE_POINT }
+  fromEnum ClosurePoint = #{const PPL_GENERATOR_TYPE_CLOSURE_POINT }
+
+-- dummy Show instance for polyhedrons 
+-- (for convenience showing tuples, etc.)
+instance Show Polyhedron where
+    showsPrec _ _ = ("PPL.Polyhedron"++)
+
+
+-- | All operations on the library must be done within this wrapper.
+--
+withParmaPolyhedraLibrary :: IO a -> IO a
+withParmaPolyhedraLibrary action = do
+  checkRetVal "withParmaPolyhedraLibrary" ppl_initialize
+  ppl_set_error_handler errHandler
+  res <- action
+  checkRetVal "withParmaPolyhedraLibrary" ppl_finalize
+  return res
+
+foreign import ccall unsafe "ppl_initialize" ppl_initialize :: IO CInt
+foreign import ccall unsafe "ppl_finalize" ppl_finalize :: IO CInt
+foreign import ccall unsafe "ppl_set_error_handler" 
+  ppl_set_error_handler :: FunPtr () -> IO CInt
+foreign import ccall unsafe "&errorHandler" errHandler :: FunPtr ()
+
+
+-- A dummy data type for the external mpz_struct.
+data MpzStruct = MpzStruct
+
+-- To use the guts of an integer in C land, we need to copy the data of the
+-- number from the GCed Haskell land to safer C land.
+withInteger :: Integer -> (Ptr MpzStruct -> IO a) -> IO a
+withInteger (J## size## barr##) act = do
+  -- Make space for a mpz_t struct.
+  allocaBytes #{const sizeof(__mpz_struct)} $ \mpzPtr -> do
+    let bytesInLimbs = I## (sizeofByteArray## barr##)
+    let limbs@(I## limbs##) = bytesInLimbs `div` #{const sizeof(mp_limb_t)}
+    -- Make space for a limb as big as the one of the Integer.
+    allocaBytes bytesInLimbs $ \limbPtr@(Ptr addr##) -> do
+      -- Copy the limb of the Integer to the newly created mpz_t.
+      let
+	copy## :: Int## -> State## RealWorld -> (## State## RealWorld, () ##)
+        copy## 0## s = (## s, () ##)
+	copy## i## s =
+          case i## -## 1## of { i'## ->
+	    case indexWord#{const 8*sizeof(mp_limb_t)}Array## 
+	      barr## i'## of { val## ->
+	      case writeWord#{const 8*sizeof(mp_limb_t)}OffAddr##
+		addr## i'## val## s of { s' ->
+		copy## i'## s'
+	      }
+	    }
+	  }
+      IO $ \s -> copy## limbs## s
+      -- Fill the structure
+      #{poke __mpz_struct, _mp_alloc} (castPtr mpzPtr) (fromIntegral limbs :: CInt)
+      #{poke __mpz_struct, _mp_size} (castPtr mpzPtr) (fromIntegral (I## size##) :: CInt)
+      #{poke __mpz_struct, _mp_d} (castPtr mpzPtr) limbPtr
+      act mpzPtr
+withInteger small act = withInteger (toBig small) act
+
+
+-- To transfer an integer to Haskell land we allocate an mpz_t
+-- structure, initialize it, send it to the C function,
+-- then copy its content to Haskell and finally free it.
+extractInteger :: (Ptr MpzStruct -> IO a) -> IO (Integer, a)
+extractInteger act = 
+  -- Make space for a mpz_t struct.
+  allocaBytes #{const sizeof(__mpz_struct)} $ \mpzPtr ->
+    bracket_ (mpz_init mpzPtr) (mpz_clear mpzPtr) $ do
+      res <- act mpzPtr
+      -- Extract the contents of the mpz_t to a Haskell integer.
+      c_alloc <- #{peek __mpz_struct, _mp_alloc} (castPtr mpzPtr) :: IO CInt
+      c_size <- #{peek __mpz_struct, _mp_size} (castPtr mpzPtr) :: IO CInt
+      (Ptr addr##) <- #{peek __mpz_struct, _mp_d} (castPtr mpzPtr)
+      let (I## alloc##) = fromIntegral c_alloc
+      let (I## size##) = fromIntegral c_size
+      val <- IO $ \s## ->
+	case newByteArray## (alloc## *## #{const sizeof(mp_limb_t)}##) s## of
+          { (## s1##, mutarr## ##) ->
+	    let
+	      copy## :: Int## -> State## RealWorld -> State## RealWorld
+	      copy## 0## s## = s##
+	      copy## i## s##=
+	        let
+	          i'##  = i## -## 1##
+	          val## = indexWord#{const 8*sizeof(mp_limb_t)}OffAddr## 
+			    addr## i'##
+	          s'##  = writeWord#{const 8*sizeof(mp_limb_t)}Array## 
+			    mutarr## i'## val## s##
+	        in copy## i'## s'##
+            in
+	      case copy## alloc## s1## of { s2## ->
+	        case unsafeFreezeByteArray## mutarr## s2## of {
+	          (## s3##, barr## ##) -> (## s3##, J## size## barr## ##)
+	        }
+	      }
+           }
+      return (val, res)
+
+foreign import ccall unsafe "__gmpz_init" mpz_init :: Ptr MpzStruct -> IO ()
+foreign import ccall unsafe "__gmpz_clear" mpz_clear :: Ptr MpzStruct -> IO ()
+
+
+conSysConstraints :: ConstraintSystem -> IO [Constraint]
+conSysConstraints (ConstraintSystem csFPtr) = withForeignPtr csFPtr $ \csPtr -> 
+  alloca $ \iterPtrPtr -> alloca $ \endPtrPtr -> do
+  ppl_new_Constraint_System_const_iterator iterPtrPtr
+  iterPtr <- peek iterPtrPtr
+  ppl_Constraint_System_begin csPtr iterPtr
+  ppl_new_Constraint_System_const_iterator endPtrPtr
+  endPtr <- peek endPtrPtr
+  ppl_Constraint_System_end csPtr endPtr
+  cons <- iterate iterPtr endPtr
+  delete_Constraint_System_const_iterator iterPtr
+  delete_Constraint_System_const_iterator endPtr
+  mapM (\res -> liftM Constraint $ newForeignPtr deleteConstraint res) cons
+  where
+    iterate iterPtr endPtr = do
+      equal <- ppl_Constraint_System_const_iterator_equal_test iterPtr endPtr
+      if equal/=0 then return [] else alloca $ \cPtrPtr -> do
+        ppl_Constraint_System_const_iterator_dereference iterPtr cPtrPtr
+        cPtr <- peek cPtrPtr
+	ppl_new_Constraint_from_Constraint cPtrPtr cPtr
+	cPtr <- peek cPtrPtr
+        ppl_Constraint_System_const_iterator_increment iterPtr
+	cPtrs <- iterate iterPtr endPtr
+        return (cPtr:cPtrs)
+
+foreign import ccall unsafe "ppl_delete_Constraint_System_const_iterator"
+  delete_Constraint_System_const_iterator :: Ptr ConstraintSystemIterator -> IO ()
+
+genSysGenerators :: GeneratorSystem -> IO [Generator]
+genSysGenerators (GeneratorSystem csFPtr) = withForeignPtr csFPtr $ \csPtr -> 
+  alloca $ \iterPtrPtr -> alloca $ \endPtrPtr -> do
+  ppl_new_Generator_System_const_iterator iterPtrPtr
+  iterPtr <- peek iterPtrPtr
+  ppl_Generator_System_begin csPtr iterPtr
+  ppl_new_Generator_System_const_iterator endPtrPtr
+  endPtr <- peek endPtrPtr
+  ppl_Generator_System_end csPtr endPtr
+  cons <- iterate iterPtr endPtr
+  delete_Generator_System_const_iterator iterPtr
+  delete_Generator_System_const_iterator endPtr
+  mapM (\res -> liftM Generator $ newForeignPtr deleteGenerator res) cons
+  where
+    iterate iterPtr endPtr = do
+      equal <- ppl_Generator_System_const_iterator_equal_test iterPtr endPtr
+      if equal/=0 then return [] else alloca $ \cPtrPtr -> do
+        ppl_Generator_System_const_iterator_dereference iterPtr cPtrPtr
+        cPtr <- peek cPtrPtr
+	ppl_new_Generator_from_Generator cPtrPtr cPtr
+	cPtr <- peek cPtrPtr
+        ppl_Generator_System_const_iterator_increment iterPtr
+	cPtrs <- iterate iterPtr endPtr
+        return (cPtr:cPtrs)
+
+foreign import ccall unsafe "ppl_delete_Generator_System_const_iterator"
+  delete_Generator_System_const_iterator :: Ptr GeneratorSystemIterator -> IO ()
