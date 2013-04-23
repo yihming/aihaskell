@@ -1,6 +1,5 @@
 module AbstractSyntax where
 
-import Data.Char
 import Data.List
 
 data Program = Program1 ProcDefList VarSection Body
@@ -13,7 +12,10 @@ type Identifier = [Char]
 
 data ProcDefList = ProcDefList [ProcDef]
 instance Show ProcDefList where
-  show (ProcDefList pl) = concat $ map show pl
+  show (ProcDefList pl) = 
+    if null pl
+       then ""
+       else concat $ map show pl
 
 data ProcDef = Proc1 Identifier VarDeclList VarDeclList VarSection Body
              | Proc2 Identifier VarDeclList VarDeclList Body
@@ -126,9 +128,8 @@ instance Show Relop where
   show LEQ = "<="
   show LT_Keyword = "<"
 
-data NumExpr = NumInt Int
-             | NumReal Float
-             | NumRational Int Int
+data NumExpr = NumInt Integer
+             | NumReal Double
              | RandNum
              | ID Identifier
              | Bop Bop NumExpr NumExpr
@@ -136,7 +137,6 @@ data NumExpr = NumInt Int
 instance Show NumExpr where
   show (NumInt n) = show n
   show (NumReal f) = show f
-  show (NumRational nom denom) = show nom ++ " / " ++ show denom
   show RandNum = " random "
   show (ID v) = v
   show (Bop bop ne1 ne2) = show ne1 ++ " " ++ show bop ++ " " ++ show ne2
