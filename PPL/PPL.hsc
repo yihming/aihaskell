@@ -1,14 +1,16 @@
+{-# LANGUAGE ForeignFunctionInterface, CPP, MagicHash, UnboxedTuples  #-}
 -- Binding to the Parma Polyhedra Library -*-haskell-*-
-{-# LANGUAGE ForeignFunctionInterface #-}
 module PPL where
 
 import Foreign
 import Foreign.C
 import Control.Monad        	(liftM, when)
 --import Control.Exception(bracket_, throwIO, Exception(AssertionFailed))
-import GHC.Base
+import Control.Exception(bracket_, throwIO, AssertionFailed)
+--import GHC.Prim
+import qualified GHC.Base as B
 import GHC.IOBase
-import GHC.Num
+import GHC.Num as N
 import GHC.Word
 import GHC.Ptr
 import Numeric
@@ -95,9 +97,12 @@ data ConstraintType
   | Greater
     deriving (Eq,Ord)
 
--- Yiming's modification for PPL 1.0: 
---   change PPL_CONSTRAINT_TYPE_LESS_THAN_OR_EQUAL to PPL_CONSTRAINT_TYPE_LESS_OR_EQUAL
---   change PPL_CONSTRAINT_TYPE_GREATER_THAN_OR_EQUAL to PPL_CONSTRAINT_TYPE_GREATER_OR_EQUAL
+{-Yiming:
+    Change PPL_CONSTRAINT_TYPE_LESS_THAN_OR_EQUAL
+        To PPL_CONSTRAINT_TYPE_LESS_OR_EQUAL;
+    Change PPL_CONSTRAINT_TYPE_GREATER_THAN_OR_EQUAL
+        To PPL_CONSTRAINT_TYPE_GREATER_OR_EQUAL;
+-}
 instance Enum ConstraintType where
   toEnum #{const PPL_CONSTRAINT_TYPE_LESS_THAN } = Less
   toEnum #{const PPL_CONSTRAINT_TYPE_LESS_OR_EQUAL } = LessOrEqual
@@ -162,28 +167,25 @@ foreign import ccall unsafe "&errorHandler" errHandler :: FunPtr ()
 -- A dummy data type for the external mpz_struct.
 data MpzStruct = MpzStruct
 
-{-
 -- To use the guts of an integer in C land, we need to copy the data of the
 -- number from the GCed Haskell land to safer C land.
 withInteger :: Integer -> (Ptr MpzStruct -> IO a) -> IO a
-withInteger (J## size## barr##) act = do
+withInteger (N.J## size## barr##) act = do
   -- Make space for a mpz_t struct.
   allocaBytes #{const sizeof(__mpz_struct)} $ \mpzPtr -> do
-    let bytesInLimbs = I## (sizeofByteArray## barr##)
-    let limbs@(I## limbs##) = bytesInLimbs `div` #{const sizeof(mp_limb_t)}
-    --let limbs = bytesInLimbs `div` #{const sizeof(mp_limb_t)}
+    let bytesInLimbs = B.I## (B.sizeofByteArray## barr##)
+    let limbs@(B.I## limbs##) = bytesInLimbs `div` #{const sizeof(mp_limb_t)}
     -- Make space for a limb as big as the one of the Integer.
     allocaBytes bytesInLimbs $ \limbPtr@(Ptr addr##) -> do
-    --allocaBytes bytesInLimbs $ \limbPtr -> do    
       -- Copy the limb of the Integer to the newly created mpz_t.
       let
-	copy## :: Int## -> State## RealWorld -> (## State## RealWorld, () ##)
+	copy## :: B.Int## -> B.State## B.RealWorld -> (## B.State## B.RealWorld, () ##)
         copy## 0## s = (## s, () ##)
 	copy## i## s =
-          case i## -## 1## of { i'## ->
-	    case indexWord#{const 8*sizeof(mp_limb_t)}Array## 
+          case i## B.-## 1## of { i'## ->
+	    case B.indexWord#{const 8*sizeof(mp_limb_t)}Array## 
 	      barr## i'## of { val## ->
-	      case writeWord#{const 8*sizeof(mp_limb_t)}OffAddr##
+	      case B.writeWord#{const 8*sizeof(mp_limb_t)}OffAddr##
 		addr## i'## val## s of { s' ->
 		copy## i'## s'
 	      }
@@ -192,10 +194,10 @@ withInteger (J## size## barr##) act = do
       IO $ \s -> copy## limbs## s
       -- Fill the structure
       #{poke __mpz_struct, _mp_alloc} (castPtr mpzPtr) (fromIntegral limbs :: CInt)
-      #{poke __mpz_struct, _mp_size} (castPtr mpzPtr) (fromIntegral (I## size##) :: CInt)
+      #{poke __mpz_struct, _mp_size} (castPtr mpzPtr) (fromIntegral (B.I## size##) :: CInt)
       #{poke __mpz_struct, _mp_d} (castPtr mpzPtr) limbPtr
       act mpzPtr
-withInteger small act = withInteger (toBig small) act
+withInteger small act = withInteger (N.toBig small) act
 
 
 -- To transfer an integer to Haskell land we allocate an mpz_t
@@ -211,31 +213,31 @@ extractInteger act =
       c_alloc <- #{peek __mpz_struct, _mp_alloc} (castPtr mpzPtr) :: IO CInt
       c_size <- #{peek __mpz_struct, _mp_size} (castPtr mpzPtr) :: IO CInt
       (Ptr addr##) <- #{peek __mpz_struct, _mp_d} (castPtr mpzPtr)
-      let (I## alloc##) = fromIntegral c_alloc
-      let (I## size##) = fromIntegral c_size
+      let (B.I## alloc##) = fromIntegral c_alloc
+      let (B.I## size##) = fromIntegral c_size
       val <- IO $ \s## ->
-	case newByteArray## (alloc## *## #{const sizeof(mp_limb_t)}##) s## of
+	case B.newByteArray## (alloc## B.*## #{const sizeof(mp_limb_t)}##) s## of
           { (## s1##, mutarr## ##) ->
 	    let
-	      copy## :: Int## -> State## RealWorld -> State## RealWorld
+	      copy## :: B.Int## -> B.State## B.RealWorld -> B.State## B.RealWorld
 	      copy## 0## s## = s##
 	      copy## i## s##=
 	        let
-	          i'##  = i## -## 1##
-	          val## = indexWord#{const 8*sizeof(mp_limb_t)}OffAddr## 
+	          i'##  = i## B.-## 1##
+	          val## = B.indexWord#{const 8*sizeof(mp_limb_t)}OffAddr## 
 			    addr## i'##
-	          s'##  = writeWord#{const 8*sizeof(mp_limb_t)}Array## 
+	          s'##  = B.writeWord#{const 8*sizeof(mp_limb_t)}Array## 
 			    mutarr## i'## val## s##
 	        in copy## i'## s'##
             in
 	      case copy## alloc## s1## of { s2## ->
-	        case unsafeFreezeByteArray## mutarr## s2## of {
-	          (## s3##, barr## ##) -> (## s3##, J## size## barr## ##)
+	        case B.unsafeFreezeByteArray## mutarr## s2## of {
+	          (## s3##, barr## ##) -> (## s3##, N.J## size## barr## ##)
 	        }
 	      }
            }
       return (val, res)
--}
+
 foreign import ccall unsafe "__gmpz_init" mpz_init :: Ptr MpzStruct -> IO ()
 foreign import ccall unsafe "__gmpz_clear" mpz_clear :: Ptr MpzStruct -> IO ()
 
@@ -344,7 +346,18 @@ foreign import ccall unsafe "ppl_set_timeout"
 
 
 -- TODO: write binding for reset_timeout
--- TODO: write binding for set_deterministic_timeout
+setDeterministicTimeout :: 
+  Int ->
+  IO ()
+setDeterministicTimeout arg0 = do
+  let mArg0 = fromIntegral arg0
+  checkRetVal "setDeterministicTimeout" $ 
+    ppl_set_deterministic_timeout mArg0
+
+foreign import ccall unsafe "ppl_set_deterministic_timeout"
+  ppl_set_deterministic_timeout :: #{type unsigned} -> IO CInt
+
+
 -- TODO: write binding for reset_deterministic_timeout
 maxSpaceDimension :: 
   IO Dimension
@@ -3300,8 +3313,6 @@ foreign import ccall unsafe "ppl_all_affine_ranking_functions_PR_NNC_Polyhedron"
 -- TODO: write binding for Rational_Box_topological_closure_assign
 -- TODO: write binding for Rational_Box_bounds_from_above
 -- TODO: write binding for Rational_Box_bounds_from_below
--- TODO: write binding for Rational_Box_get_upper_bound
--- TODO: write binding for Rational_Box_get_lower_bound
 -- TODO: write binding for Rational_Box_maximize
 -- TODO: write binding for Rational_Box_minimize
 -- TODO: write binding for Rational_Box_maximize_with_point
@@ -3355,7 +3366,6 @@ foreign import ccall unsafe "ppl_all_affine_ranking_functions_PR_NNC_Polyhedron"
 -- TODO: write binding for Rational_Box_widening_assign
 -- TODO: write binding for Rational_Box_limited_CC76_extrapolation_assign_with_tokens
 -- TODO: write binding for Rational_Box_limited_CC76_extrapolation_assign
--- TODO: write binding for Rational_Box_CC76_narrowing_assign
 -- TODO: write binding for Rational_Box_linear_partition
 -- TODO: write binding for Rational_Box_wrap_assign
 -- TODO: write binding for new_Rational_Box_recycle_Constraint_System
@@ -4205,8 +4215,6 @@ foreign import ccall unsafe "ppl_all_affine_ranking_functions_PR_NNC_Polyhedron"
 -- TODO: write binding for Double_Box_topological_closure_assign
 -- TODO: write binding for Double_Box_bounds_from_above
 -- TODO: write binding for Double_Box_bounds_from_below
--- TODO: write binding for Double_Box_get_upper_bound
--- TODO: write binding for Double_Box_get_lower_bound
 -- TODO: write binding for Double_Box_maximize
 -- TODO: write binding for Double_Box_minimize
 -- TODO: write binding for Double_Box_maximize_with_point
@@ -4260,7 +4268,6 @@ foreign import ccall unsafe "ppl_all_affine_ranking_functions_PR_NNC_Polyhedron"
 -- TODO: write binding for Double_Box_widening_assign
 -- TODO: write binding for Double_Box_limited_CC76_extrapolation_assign_with_tokens
 -- TODO: write binding for Double_Box_limited_CC76_extrapolation_assign
--- TODO: write binding for Double_Box_CC76_narrowing_assign
 -- TODO: write binding for Double_Box_linear_partition
 -- TODO: write binding for Double_Box_wrap_assign
 -- TODO: write binding for new_Double_Box_recycle_Constraint_System
