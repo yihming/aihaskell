@@ -10,13 +10,21 @@ import Control.Exception(bracket_, throwIO, AssertionFailed)
 --import GHC.Prim
 import qualified GHC.Base as B
 import GHC.IOBase
-import GHC.Num as N
+import GHC.Num
 import GHC.Word
 import GHC.Ptr
 import Numeric
+import GHC.Integer.GMP.Internals
+import GHC.Integer.GMP.Prim
 #include "/usr/include/gmp.h"
 #include <ppl_c.h>
 #include "errhandler.h"
+
+toBig :: Integer -> Integer
+toBig (S# i) = 
+  case int2Integer# i of 
+    (# s, d #) -> J# s d
+toBig i@(J# _ _) = i
 
 checkRetVal :: String -> IO CInt -> IO ()
 checkRetVal location act= do
@@ -170,7 +178,7 @@ data MpzStruct = MpzStruct
 -- To use the guts of an integer in C land, we need to copy the data of the
 -- number from the GCed Haskell land to safer C land.
 withInteger :: Integer -> (Ptr MpzStruct -> IO a) -> IO a
-withInteger (N.J## size## barr##) act = do
+withInteger (J## size## barr##) act = do
   -- Make space for a mpz_t struct.
   allocaBytes #{const sizeof(__mpz_struct)} $ \mpzPtr -> do
     let bytesInLimbs = B.I## (B.sizeofByteArray## barr##)
@@ -197,7 +205,7 @@ withInteger (N.J## size## barr##) act = do
       #{poke __mpz_struct, _mp_size} (castPtr mpzPtr) (fromIntegral (B.I## size##) :: CInt)
       #{poke __mpz_struct, _mp_d} (castPtr mpzPtr) limbPtr
       act mpzPtr
-withInteger small act = withInteger (N.toBig small) act
+withInteger small act = withInteger (toBig small) act
 
 
 -- To transfer an integer to Haskell land we allocate an mpz_t
@@ -232,7 +240,7 @@ extractInteger act =
             in
 	      case copy## alloc## s1## of { s2## ->
 	        case B.unsafeFreezeByteArray## mutarr## s2## of {
-	          (## s3##, barr## ##) -> (## s3##, N.J## size## barr## ##)
+	          (## s3##, barr## ##) -> (## s3##, J## size## barr## ##)
 	        }
 	      }
            }
