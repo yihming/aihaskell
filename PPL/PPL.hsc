@@ -6,10 +6,10 @@ import Foreign
 import Foreign.C
 import Control.Monad        	(liftM, when)
 --import Control.Exception(bracket_, throwIO, Exception(AssertionFailed))
-import Control.Exception(bracket_, throwIO, AssertionFailed)
+import qualified Control.Exception as E
 --import GHC.Prim
 import qualified GHC.Base as B
-import GHC.IOBase
+import GHC.IO
 import GHC.Num
 import GHC.Word
 import GHC.Ptr
@@ -21,10 +21,10 @@ import GHC.Integer.GMP.Prim
 #include "errhandler.h"
 
 toBig :: Integer -> Integer
-toBig (S# i) = 
-  case int2Integer# i of 
-    (# s, d #) -> J# s d
-toBig i@(J# _ _) = i
+toBig (S## i) = 
+  let (## s,d ##) = int2Integer## i
+  in  J## s d
+toBig i@(J## _ _) = i
 
 checkRetVal :: String -> IO CInt -> IO ()
 checkRetVal location act= do
@@ -33,7 +33,7 @@ checkRetVal location act= do
   res <- act
   when (res<0) $ do
     msg <- extractErr
-    throwIO $ AssertionFailed (makeErrMsg res++"\n"++msg)
+    throwIO $ E.AssertionFailed (makeErrMsg res++"\n"++msg)
   where
     makeErrMsg (#{const PPL_ERROR_OUT_OF_MEMORY}) =
 	"PPL: out of memory in "++location
@@ -159,7 +159,7 @@ instance Show Polyhedron where
 --
 withParmaPolyhedraLibrary :: IO a -> IO a
 withParmaPolyhedraLibrary action = do
-  checkRetVal "withParmaPolyhedraLibrary" ppl_initialize
+  checkRetVal "Withparmapolyhedralibrary" ppl_initialize
   ppl_set_error_handler errHandler
   res <- action
   checkRetVal "withParmaPolyhedraLibrary" ppl_finalize
@@ -215,7 +215,7 @@ extractInteger :: (Ptr MpzStruct -> IO a) -> IO (Integer, a)
 extractInteger act = 
   -- Make space for a mpz_t struct.
   allocaBytes #{const sizeof(__mpz_struct)} $ \mpzPtr ->
-    bracket_ (mpz_init mpzPtr) (mpz_clear mpzPtr) $ do
+    E.bracket_ (mpz_init mpzPtr) (mpz_clear mpzPtr) $ do
       res <- act mpzPtr
       -- Extract the contents of the mpz_t to a Haskell integer.
       c_alloc <- #{peek __mpz_struct, _mp_alloc} (castPtr mpzPtr) :: IO CInt
@@ -1686,7 +1686,65 @@ foreign import ccall unsafe "&ppl_delete_Polyhedron"
   deletePolyhedron :: FinalizerPtr Polyhedron
 
 -- TODO: write binding for new_C_Polyhedron_from_space_dimension
+newCPolyhedronFromDimension ::
+  Dimension ->
+  IO Polyhedron
+newCPolyhedronFromDimension arg1 = do
+  alloca $ \mArg0 -> do
+    let mArg1 = fromIntegral arg1  
+    checkRetVal "newCPolyhedronFromDimension" $
+      ppl_new_C_Polyhedron_from_dimension mArg0 mArg1
+    res <- peek mArg0
+    liftM Polyhedron $ newForeignPtr deletePolyhedron res
+    
+foreign import ccall unsafe "ppl_new_C_Polyhedron_from_space_dimension"
+  ppl_new_C_Polyhedron_from_dimension :: Ptr (Ptr Polyhedron) -> Word64 -> IO CInt
+
 -- TODO: write binding for new_NNC_Polyhedron_from_space_dimension
+newNNCPolyhedronFromDimension ::
+  Dimension ->
+  IO Polyhedron
+newNNCPolyhedronFromDimension arg1 = do
+  alloca $ \mArg0 -> do
+    let mArg1 = fromIntegral arg1
+    checkRetVal "newNNCPolyhedronFromDimension" $
+      ppl_new_NNC_Polyhedron_from_dimension mArg0 mArg1
+    res <- peek mArg0
+    liftM Polyhedron $ newForeignPtr deletePolyhedron res
+    
+foreign import ccall unsafe "ppl_new_NNC_Polyhedron_from_space_dimension"
+  ppl_new_NNC_Polyhedron_from_dimension :: Ptr (Ptr Polyhedron) -> Word64 -> IO CInt
+
+{-
+newCPolyhedronEmptyFromDimension ::
+  Dimension ->
+  IO Polyhedron
+newCPolyhedronEmptyFromDimension arg1 = do
+  alloca $ \mArg0 -> do
+    let mArg1 = fromIntegral arg1
+    checkRetVal "newCPolyhedronEmptyFromDimension" $
+      ppl_new_C_Polyhedron_empty_from_dimension mArg0 mArg1
+    res <- peek mArg0
+    liftM Polyhedron $ newForeignPtr deletePolyhedron res
+
+foreign import ccall unsafe "ppl_new_C_Polyhedron_empty_from_space_dimension"
+  ppl_new_C_Polyhedron_empty_from_dimension :: Ptr (Ptr Polyhedron) -> Word64 -> IO CInt
+                                               
+newNNCPolyhedronEmptyFromDimension ::
+  Dimension ->
+  IO Polyhedron
+newNNCPolyhedronEmptyFromDimension arg1 = do
+  alloca $ \mArg0 -> do
+    let mArg1 = fromIntegral arg1
+    checkRetVal "newNNCPolyhedronEmptyFromDimension" $
+      ppl_new_NNC_Polyhedron_empty_from_dimension mArg0 mArg1
+    res <- peek mArg0
+    liftM Polyhedron $ newForeignPtr deletePolyhedron res
+  
+foreign import ccall unsafe "ppl_new_NNC_Polyhedron_empty_from_space_dimension"
+  ppl_new_NNC_Polyhedron_empty_from_dimension :: Ptr (Ptr Polyhedron) -> Word64 -> IO CInt
+-}
+
 newCPolyhedronFromCPolyhedron :: 
   Polyhedron ->
   IO Polyhedron

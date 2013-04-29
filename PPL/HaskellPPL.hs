@@ -4,10 +4,10 @@
 
 module HaskellPPL where
 import System.IO.Unsafe
-import qualified PPL
-import List
-import Monad
-import Maybe
+import qualified PPL as PPL
+import Data.List
+import Control.Monad
+import Data.Maybe
 
 
 type Dimension   = PPL.Dimension
@@ -128,7 +128,7 @@ type Polyhedron = PPL.Polyhedron
 
 new_polyhedron :: Polyhedron -> IO Polyhedron
 new_polyhedron = PPL.newCPolyhedronFromCPolyhedron
-polyhedron_empty = PPL.newCPolyhedronEmptyFromDimension 0
+--polyhedron_empty = PPL.newCPolyhedronEmptyFromDimension 0
 polyhedron_universe = polyhedron_from_consys []
 
 -- construct a polyhedron 
@@ -317,7 +317,7 @@ mk_linear_expr (LinProd n e) linexp fact
 
 gensys_from_polyhedron :: Polyhedron -> IO LinGenSys
 gensys_from_polyhedron p
-    = do { ppl_gs <- PPL.polyhedronMinimizedGenerators p
+    = do { ppl_gs <- PPL.polyhedronGetMinimizedGenerators p
 	 ; gs_list <- PPL.genSysGenerators ppl_gs
 	 ; sequence [generatorFromPPL ppl_g | ppl_g<-gs_list]
 	 }
@@ -376,7 +376,7 @@ consys_from_polyhedron :: Polyhedron -> IO LinConSys
 consys_from_polyhedron p 
     = do { empty <- PPL.polyhedronIsEmpty p
 	 ; if empty then return [LinConstr (PPL.Equal,0,1)]
-	   else do { consys <- PPL.polyhedronMinimizedConstraints p
+	   else do { consys <- PPL.polyhedronGetMinimizedConstraints p
 		   ; ppl_cs <- PPL.conSysConstraints consys
 		   ; sequence [constraintFromPPL ppl_c | ppl_c<-ppl_cs]
 		   }
