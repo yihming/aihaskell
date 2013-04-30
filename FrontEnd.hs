@@ -2,7 +2,8 @@ module FrontEnd where
 
 import Text.ParserCombinators.Parsec
 import qualified Text.ParserCombinators.Parsec.Token as T
-
+import Data.Char
+import Data.List
 
 import AbstractSyntax as S
 
@@ -46,7 +47,8 @@ symbol s = do
   spaces
 reserved = T.reserved lexer
 float = T.float lexer
-integer = T.integer lexer
+--integer = T.integer lexer
+integer = many1 digit
 
 -- This is the main function of Front-end.
 parseInterproc :: String -> S.Program
@@ -58,162 +60,73 @@ parseInterproc input =
 test :: IO ()
 test = do
   src <- readFile "test/nn.input"
-  let t = parse procDef "" src
+  let t = parseInterproc src
   putStrLn $ show t
 
 parseProg :: Parser S.Program
-parseProg = try prog1 <|> prog2
+parseProg = prog
 
-
-prog1 = do
-  proc_l <- procDefList
-  v_sec <- varSection
+prog = do
+  vs <- varSection
   b <- parseBody
-  return (S.Program1 proc_l v_sec b)
+  return (S.Program vs b)
   
-prog2 = do
-  proc_l <- procDefList
-  b <- parseBody
-  return (S.Program2 proc_l b)
-  
-procDefList = do
-  procs <- many procDef
-  return (S.ProcDefList procs)
-procDef = try proc1 <|> proc2
-
-proc1 = do
-  symbol "proc"
-  name <- identifier
-  paramList <- between (symbol "(") (symbol ")") varDeclList  
-  symbol "returns"
-  retList <- between (symbol "(") (symbol ")") varDeclList
-  v_sec <- varSection
-  b <- parseBody
-  return (S.Proc1 name paramList retList v_sec b)
-  
-proc2 = do
-  symbol "proc"  
-  name <- identifier
-  paramList <- between (symbol "(") (symbol ")") varDeclList
-  symbol "returns"
-  retList <- between (symbol "(") (symbol ")") varDeclList
-  b <- parseBody
-  return (S.Proc2 name paramList retList b)
-  
-varDeclList = do
-  decl_list <- varDecl `sepBy` (symbol ",")
-  return (S.VarList decl_list)
-  
-varDecl = do  
-  name <- identifier  
-  symbol ":"
-  t <- parseType
-  return (S.Var name t)
-  
-parseType = (do
-  symbol "int"
-  return S.IntType)
-  <|> (do
-  symbol "real"  
-  return S.RealType)
-
 varSection = do
   symbol "var"
-  v_list <- varDeclList
+  v_list <- varDecl `sepBy` (symbol ",")
   symbol ";"
   return (S.VarSection v_list)
 
-parseBody = do
-  symbol"begin"
-  stmt_list <- many1 statement
-  symbol "end"
-  return (S.ProgramBody stmt_list)
+varDecl = do
+  name <- identifier
+  symbol ":"
+  typeName <- parseType
+  return (S.VarDecl name typeName)
   
+parseType = (do
+  symbol "int"           
+  return S.IntType) <|>
+            (do
+  symbol "real"              
+  return S.RealType)
+
+parseBody = do
+  symbol "begin"
+  bs <- many1 statement
+  symbol "end"
+  return (S.Body bs)
+
 -- Statements.
-statement = try s1 <|> try s2 <|> try s3 <|> try s4 <|> s5
+statement = try s1 <|> try s2 <|> s3
 
 -- s1 ::= skip; | halt; | fail;
 s1 = (do
-  symbol "skip"
+  symbol "skip"       
   symbol ";"
-  return S.Skip)
-  <|> (do
-  symbol "halt"        
+  return S.Skip) <|>
+     (do
+  symbol "halt"       
   symbol ";"
-  return S.Halt)
-  <|> (do   
-  symbol "fail"        
+  return S.Halt) <|>
+     (do
+  symbol "fail"       
   symbol ";"
   return S.Fail)
 
--- s2 ::= Assume BoolExpr;
+-- s2 ::= Var = RHSExpr
 s2 = do
-  symbol "assume"
-  be <- parseBoolExpr
-  symbol ";"
-  return (S.Assume be)
-
-s3 = do
-  lhs <- parseLHSExpr
+  lhs <- identifier
   symbol "="
-  rhs <- parseRHSExpr
+  rhs <- parseRHS
   symbol ";"
   return (S.Assign lhs rhs)
 
-parseLHSExpr = (do
-  name <- identifier
-  return (S.LHS name))
-  <|> (do
-  symbol "("        
-  v_list <- identifier `sepBy` (symbol ",")
-  symbol ")"
-  return (S.ParLHS v_list))
-               
-parseRHSExpr = (do
-  symbol "random"
-  return (S.RandRHS))
-  <|> try (do             
-  spaces        
-  ne <- parseNumExpr        
-  return (S.NumRHS ne))
-  <|> (do            
-  p <- parseProcInvocation
-  return (S.ProcRHS p))
+parseRHS = do
+  rhs  <- parseNumExpr
+  return (S.NumRHS rhs)
 
-parseProcInvocation = do
-  procName <- identifier
-  symbol "("
-  params <- identifier `sepBy` (symbol ",")
-  symbol ")"
-  return (S.Call procName (S.Params params))
-
-s4 = try (do
-  symbol "if"
-  be <- parseBoolExpr
-  t2 <- parseThenBlock
-  t3 <- parseElseBlock
-  symbol "endif"
-  symbol ";"
-  return (S.If1 be t2 t3))
-  <|> (do
-  symbol "if"        
-  be <- parseBoolExpr
-  t2 <- parseThenBlock
-  symbol "endif"
-  symbol ";"
-  return (S.If2 be t2))
-
-parseThenBlock = do
-  symbol "then"
-  ss <- many1 statement
-  return (S.Then ss)
-  
-parseElseBlock = do
-  symbol "else"
-  ss <- many1 statement
-  return (S.Else ss)
-  
-s5 = do
+-- s3 ::= while BoolExpr do [Stmt] done;
+s3 = do
   symbol "while"
   be <- parseBoolExpr
   symbol "do"
@@ -223,40 +136,21 @@ s5 = do
   return (S.While be ss)
 
 -- Boolean Expressions.
-parseBoolExpr = (do
+parseBoolExpr = try (do
   symbol "true"
   return (S.Tru))
-  <|> (do
+  <|> try (do
   symbol "false"        
   return (S.Fls))
-  <|> (do
-  symbol "brandom"                      
-  return (S.Brandom))
-  <|> (do              
-  ce <- parseConstraintExpr        
-  return (S.Constraint ce))
-  <|> (do              
-  symbol "not"        
-  space
-  be <- parseBoolExpr
-  return (S.Not be))
-  <|> try (do              
-  be1 <- parseBoolExpr        
-  space
-  symbol "or"
-  space
-  be2 <- parseBoolExpr
-  return (S.Or be1 be2))
-  <|> (do              
-  be1 <- parseBoolExpr        
-  space
+  <|> try (do
+  be1 <- parseConstraintExpr            
   symbol "and"
-  space
-  be2 <- parseBoolExpr
+  be2 <- parseConstraintExpr
   return (S.And be1 be2))
   <|> (do              
-  be <- between (symbol "(") (symbol ")") parseBoolExpr        
-  return (S.ParBool be))
+  ce <- parseConstraintExpr
+  return (S.Constraint ce))
+
 
 parseConstraintExpr = do
   ne1 <- parseNumExpr
@@ -264,17 +158,17 @@ parseConstraintExpr = do
   ne2 <- parseNumExpr
   return (S.Relop rop ne1 ne2)
 
-relop = (do
-  try (symbol "==")          
+relop = try (do
+  symbol "=="          
   return (EQUAL))
-  <|> (do      
-  try (symbol ">=")        
+  <|> try (do      
+  symbol ">="        
   return (GEQ))
   <|> (do      
   symbol ">"        
   return (GT_Keyword))
-  <|> (do      
-  try (symbol "<=")        
+  <|> try (do      
+  symbol "<="        
   return (LEQ))
   <|> (do      
   symbol "<"        
@@ -284,18 +178,16 @@ parseNumExpr = term `chainl1` addsubop
 
 term = factor `chainl1` muldivmodop
 
-factor = try (do
-  n <- float          
-  return (S.NumReal n))
-  <|> (do       
+factor = (do       
+  spaces           
   n <- integer      
-  return (S.NumInt n))
+  spaces
+  return (S.NumInt (read n::Integer)))
   <|> (do       
+  spaces        
   name <- identifier       
-  return (S.ID name))
-  <|> (do       
-  ne <- between (symbol "(") (symbol ")") parseNumExpr        
-  return (S.ParNum ne))
+  spaces
+  return (S.Var name))
          
 addsubop = (do
   symbol "+"             
