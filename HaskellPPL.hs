@@ -126,6 +126,10 @@ spaceDimension a | null xs  = 0
 -- synonym to PPL convex polyhedra type 
 type Polyhedron = PPL.Polyhedron
 
+-- Whether the polyhedron is empty.
+polyhedron_is_empty :: Polyhedron -> IO Bool
+polyhedron_is_empty = PPL.polyhedronIsEmpty
+
 new_polyhedron :: Polyhedron -> IO Polyhedron
 new_polyhedron = PPL.newCPolyhedronFromCPolyhedron
 --polyhedron_empty = PPL.newCPolyhedronEmptyFromDimension 0
@@ -223,12 +227,13 @@ polyhedron_hull p q
 
 
 -- widening operators
+-- p2 ▿ p1
 polyhedron_h79_widening :: Polyhedron -> Polyhedron -> IO ()
 polyhedron_h79_widening p1 p2
     = do { polyhedron_adjust_dimensions p1 p2
          ; PPL.polyhedronH79WideningAssign p1 p2
 	 }
-
+-- p2 ▿ p1
 polyhedron_bhrz03_widening :: Polyhedron -> Polyhedron -> IO ()
 polyhedron_bhrz03_widening p1 p2
     = do { polyhedron_adjust_dimensions p1 p2

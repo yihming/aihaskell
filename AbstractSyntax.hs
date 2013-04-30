@@ -1,6 +1,7 @@
 module AbstractSyntax where
 
 import Data.List
+import qualified HaskellPPL as HP
 
 showSepBy :: Show a => String -> [a] -> String
 showSepBy s l = 
@@ -39,7 +40,7 @@ data Stmt = Skip
           | Fail  
           | Assign Var RHSExpr  
           | While BoolExpr [Stmt]  
-
+          | Assert HP.Polyhedron
 instance Show Stmt where
   show Skip = "skip;\n"
   show Halt = "halt;\n"
@@ -49,7 +50,8 @@ instance Show Stmt where
     if length ss == 1
        then "while " ++ show be ++ "do\n  " ++ (showSepBy "" ss) ++ "done;\n"
        else "while " ++ show be ++ " do\n" ++ (showSepBy "  " ss) ++ "done;\n"
-                             
+  show (Assert p) = "/* " ++ show p ++ " */\n"
+
 data RHSExpr = NumRHS NumExpr
 instance Show RHSExpr where
   show (NumRHS ne) = show ne
