@@ -2,7 +2,7 @@ LIBS = -lppl_c -lppl -lgmpxx -lgmp -lstdc++
 
 PPL_C_H = /usr/local/include/ppl_c.h
 
-SRCS = AbstractSyntax.hs FrontEnd.hs PPL.hs HaskellPPL.hs SemanticsAnalysis.hs
+SRCS = Plot.hs AbstractSyntax.hs FrontEnd.hs PPL.hs HaskellPPL.hs SemanticsAnalysis.hs
 
 all:	Main.hs errhandler.o $(SRCS)
 		rm -f InterProc
