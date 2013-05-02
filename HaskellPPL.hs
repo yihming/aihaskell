@@ -35,6 +35,12 @@ newtype LinConstr = LinConstr (LinConstrRel, LinExpr, LinExpr)
 instance Show LinConstr where
     showsPrec _ (LinConstr (rel,lhs,rhs)) = shows lhs . shows rel . shows rhs
 
+instance Eq LinConstr where
+  lhs@(LinConstr (rel1, le1, le2)) == rhs@(LinConstr (rel2, le3, le4)) =
+    if rel1 == rel2 && le1 == le3 && le2 == le4
+       then True
+       else False     
+
 -- infix operators for constraint relations
 infix 4 %==, %<, %>, %<=, %>=
 
@@ -99,7 +105,7 @@ instance Dimensional LinExpr where
     dimensions (LinCoef c) = []
     dimensions (LinPlus e1 e2) = dimensions e1 ++ dimensions e2
     dimensions (LinProd c e) = dimensions e
-
+    
 
 instance Dimensional LinGenerator where
     dimensions (Point le c) = dimensions le
@@ -116,19 +122,146 @@ instance Dimensional a => Dimensional [a] where
     dimensions xs = concatMap dimensions xs
 
 
+-- Yiming
+linconstr_contains_dimension :: Dimension -> LinConstr -> Bool    
+linconstr_contains_dimension dim (LinConstr (_, le1, le2)) = 
+  (linexpr_contains_dimension dim le1) || (linexpr_contains_dimension dim le2)
+  
+linexpr_contains_dimension :: Dimension -> LinExpr -> Bool
+linexpr_contains_dimension dim le =
+  case le of
+    LinVar d -> case compare d dim of
+                  EQ -> True
+                  _  -> False
+    LinCoef c-> False
+    LinPlus le1 le2
+             -> (linexpr_contains_dimension dim le1) || (linexpr_contains_dimension dim le2)
+    LinProd c le'
+             -> linexpr_contains_dimension dim le'
+    
+    
+consys_propagate_dimension :: Dimension -> LinConSys -> LinConSys
+consys_propagate_dimension dim [] = [] :: LinConSys
+consys_propagate_dimension dim lcs@((LinConstr tp):cs) =
+  case tp of
+    (PPL.Equal,le1,le2) -> 
+      case le1 of
+        LinVar d -> case compare dim d of
+                      EQ -> case le2 of
+                              LinCoef n -> f dim n lcs
+                              _         -> consys_propagate_dimension dim cs
+                      _  -> consys_propagate_dimension dim cs
+        LinCoef n-> case le2 of
+                      LinVar d -> case compare dim d of
+                                    EQ -> f dim n lcs
+                                    _  -> consys_propagate_dimension dim cs
+                      _        -> consys_propagate_dimension dim cs
+        _        -> consys_propagate_dimension dim cs
+        
+    _                    -> consys_propagate_dimension dim cs
+  where
+    f :: Dimension -> Coefficient -> LinConSys -> LinConSys
+    f dim n [] = [] :: LinConSys
+    f dim n (c@(LinConstr (rel, le1, le2)):cs) = 
+      if linconstr_contains_dimension dim c
+         then let le1' = linexpr_propagate_dimension dim n le1
+                  le2' = linexpr_propagate_dimension dim n le2
+              in  (LinConstr (rel, le1', le2')):(f dim n cs)    
+         else c:(f dim n cs)
+    
+linexpr_propagate_dimension :: Dimension -> Coefficient -> LinExpr -> LinExpr
+linexpr_propagate_dimension dim n le =
+  case le of
+    LinVar d -> case compare d dim of
+                  EQ -> LinCoef n
+                  _  -> le
+    LinCoef _-> le
+    LinPlus le1 le2 -> let le1' = linexpr_propagate_dimension dim n le1
+                           le2' = linexpr_propagate_dimension dim n le2
+                       in  LinPlus le1' le2'
+    LinProd v le' -> let le'' = linexpr_propagate_dimension dim n le'
+                     in  LinProd v le''    
+
+-- Yiming: get the complement of a linear constraint.
+--   PPL.Equal doesn't work in it, since its complement 
+--   is non-convex.
+-- TODO: Make the case of more than one clauses works.
+complement_consys :: LinConSys -> LinConSys
+complement_consys [] = bottomConsys
+complement_consys (lc : lcs) = 
+  if [lc] == bottomConsys
+     then topConsys
+     else [complement_linconstr lc] :: LinConSys     
+
+-- TODO: Resolve the problem with strict polyhedra.
+complement_linconstr :: LinConstr -> LinConstr
+complement_linconstr (LinConstr lc) = 
+  case lc of
+    (PPL.GreaterOrEqual, lhs, rhs) -> LinConstr (PPL.LessOrEqual, lhs, rhs)
+    (PPL.LessOrEqual,    lhs, rhs) -> LinConstr (PPL.GreaterOrEqual, lhs, rhs)
+    (PPL.Greater,        lhs, rhs) -> LinConstr (PPL.LessOrEqual, lhs, rhs)
+    (PPL.Less,           lhs, rhs) -> LinConstr (PPL.GreaterOrEqual, lhs, rhs)
+    _                          -> LinConstr lc
+
+-- Yiming: Define the Bottom Linear Constraint System here.
+bottomConsys :: LinConSys
+bottomConsys = [ 0 %== 1 ] :: LinConSys
+
+isBottom :: LinConSys -> Bool
+isBottom cs = 
+  if cs == bottomConsys
+     then True
+     else False     
+          
+-- Yiming: Define the Top Linear Constraint System here.
+topConsys :: LinConSys
+topConsys = [] :: LinConSys
+
+isTop :: LinConSys -> Bool
+isTop cs = 
+  if cs == topConsys
+     then True
+     else False     
 -- the space dimension of a structure is one plus the greatest size var
 spaceDimension :: Dimensional a => a -> Dimension
 spaceDimension a | null xs  = 0
 		 | otherwise = 1 + maximum xs
 		 where xs = dimensions a
 
+-- Yiming
+polyhedron_switch_dimension :: Polyhedron -> Dimension -> Dimension -> IO Polyhedron
+polyhedron_switch_dimension p dim0 dim1 = do
+  cs <- consys_from_polyhedron p
+  let cs' = consys_switch_dimension cs dim0 dim1
+  p' <- polyhedron_from_consys cs' 
+  return p'
+
+consys_switch_dimension :: LinConSys -> Dimension -> Dimension -> LinConSys
+consys_switch_dimension [] _ _ = []
+consys_switch_dimension ((LinConstr (rel, le1, le2)):cs) dim0 dim1 = 
+  (LinConstr (rel, linexpr_switch_dimension le1 dim0 dim1,
+                   linexpr_switch_dimension le2 dim0 dim1))
+  : (consys_switch_dimension cs dim0 dim1)
+
+
+linexpr_switch_dimension :: LinExpr -> Dimension -> Dimension -> LinExpr
+linexpr_switch_dimension le dim0 dim1 = 
+  case le of
+    LinVar d        -> case compare d dim0 of
+                         EQ -> LinVar dim1
+                         _  -> le
+    LinPlus le1 le2 -> let le1' = linexpr_switch_dimension le1 dim0 dim1
+                           le2' = linexpr_switch_dimension le2 dim0 dim1
+                       in  LinPlus le1' le2'
+    LinProd coe le1 -> let le1' = linexpr_switch_dimension le1 dim0 dim1
+                       in  LinProd coe le1'
+    LinCoef coe     -> le
+    
+    
+
 
 -- synonym to PPL convex polyhedra type 
 type Polyhedron = PPL.Polyhedron
-
--- Whether the polyhedron is empty.
-polyhedron_is_empty :: Polyhedron -> IO Bool
-polyhedron_is_empty = PPL.polyhedronIsEmpty
 
 new_polyhedron :: Polyhedron -> IO Polyhedron
 new_polyhedron = PPL.newCPolyhedronFromCPolyhedron

@@ -40,7 +40,8 @@ data Stmt = Skip
           | Fail  
           | Assign Var RHSExpr  
           | While BoolExpr [Stmt]  
-          | Assert HP.Polyhedron
+          | Assert HP.LinConSys
+          | Comment String  
 instance Show Stmt where
   show Skip = "skip;\n"
   show Halt = "halt;\n"
@@ -48,9 +49,16 @@ instance Show Stmt where
   show (Assign lhs rhs) = lhs ++ " = " ++ show rhs ++ ";\n"
   show (While be ss) = 
     if length ss == 1
-       then "while " ++ show be ++ "do\n  " ++ (showSepBy "" ss) ++ "done;\n"
+       then "while " ++ show be ++ " do\n  " ++ (showSepBy "" ss) ++ "done;\n"
        else "while " ++ show be ++ " do\n" ++ (showSepBy "  " ss) ++ "done;\n"
-  show (Assert p) = "/* " ++ show p ++ " */\n"
+  show (Assert cs) = 
+    if null cs
+       then "/* ⊤  */\n"
+       else if cs == ([ 0 HP.%== 1] :: HP.LinConSys)
+               then "/* ⊥  */\n"
+               else "/* " ++ show cs ++ " */\n"     
+  show (Comment str) = 
+    "/** " ++ str ++ "**/\n"
 
 data RHSExpr = NumRHS NumExpr
 instance Show RHSExpr where
@@ -60,12 +68,11 @@ data BoolExpr = Tru
               | Fls
               | And ConstraintExpr ConstraintExpr
               | Constraint ConstraintExpr 
-
 instance Show BoolExpr where
   show Tru = "true"
   show Fls = "false"
   show (Constraint ce) = show ce
-  show (And be1 be2) = show be1 ++ " and " ++ show be2
+  show (And ce1 ce2) = show ce1 ++ " and " ++ show ce2
 
 data ConstraintExpr = Relop Relop NumExpr NumExpr
 instance Show ConstraintExpr where

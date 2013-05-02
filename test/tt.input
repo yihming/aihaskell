@@ -1,0 +1,6 @@
+var i : int, j : int;
+begin
+  i = 1;
+  j = 5;
+  j = j + 4;
+end
