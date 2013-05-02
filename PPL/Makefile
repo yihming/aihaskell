@@ -1,7 +1,7 @@
 
 HC      = ghc
 
-HC_OPTS = #-fffi -fglasgow-exts 
+HC_OPTS = 
 
 HC_OOPTS = 
 
