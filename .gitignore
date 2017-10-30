@@ -1,0 +1,4 @@
+# Ignore automatically generated files.
+*.o
+GenPPL
+*.hi
